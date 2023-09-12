@@ -123,6 +123,28 @@ static uint32_t country_codes[] = {
     CYW43_COUNTRY_USA
 };
 
+#ifdef WIFI_DEBUG
+
+void wifi_debug (char *context)
+{
+    int status = cyw43_tcpip_link_status(&cyw43_state, interface);
+
+    hal.stream.write("[MSG:");
+    hal.stream.write(context);
+
+    if(status >= 0) {
+        hal.stream.write("_STATUS=");
+        hal.stream.write(uitoa(status));
+    } else {
+        hal.stream.write("_STATUS=-");
+        hal.stream.write(uitoa(-status));
+    }
+
+    hal.stream.write("]" ASCII_EOL);
+}
+
+#endif
+
 #if MQTT_ENABLE
 
 static bool mqtt_connected = false;
@@ -316,6 +338,10 @@ static void lwIPHostTimerHandler (void *arg)
 
 static void start_services (void)
 {
+#ifdef WIFI_DEBUG
+    wifi_debug("AP UP...");
+#endif
+
 #if TELNET_ENABLE
     if(network.services.telnet && !services.telnet)
         services.telnet = telnetd_init(network.telnet_port);
@@ -496,10 +522,10 @@ static int scan_result (void *env, const cyw43_ev_scan_result_t *result)
         if(ap_list.ap_records) { // do not add duplicates
             ssid_t ssid;
             uint_fast8_t idx = ap_list.ap_num;
- 
+
             strncpy(ssid, result->ssid, result->ssid_len);
             ssid[result->ssid_len] = '\0';
- 
+
             do {
                 if(!strcmp(ap_list.ap_records[--idx].ssid, ssid))
                     return 0;
@@ -511,7 +537,7 @@ static int scan_result (void *env, const cyw43_ev_scan_result_t *result)
             ap_list.ap_records = records;
             ap_list.ap_records[ap_list.ap_num].authmode = result->auth_mode;
             ap_list.ap_records[ap_list.ap_num].rssi = result->rssi;
-            ap_list.ap_records[ap_list.ap_num].primary = true;            
+            ap_list.ap_records[ap_list.ap_num].primary = true;
             ap_list.ap_records[ap_list.ap_num].channel = result->channel;
             memcpy(&ap_list.ap_records[ap_list.ap_num].bssid, result->bssid, sizeof(result->bssid));
             strncpy(ap_list.ap_records[ap_list.ap_num].ssid, result->ssid, result->ssid_len);
@@ -523,34 +549,12 @@ static int scan_result (void *env, const cyw43_ev_scan_result_t *result)
     return 0;
 }
 
-#ifdef WIFI_DEBUG
-
-void wifi_debug (char *context)
-{
-    int status = cyw43_tcpip_link_status(&cyw43_state, interface);
-
-    hal.stream.write("[MSG:");
-    hal.stream.write(context);
-
-    if(status >= 0) {
-        hal.stream.write("_STATUS=");
-        hal.stream.write(uitoa(status));
-    } else {
-        hal.stream.write("_STATUS=-");
-        hal.stream.write(uitoa(-status));
-    }
-
-    hal.stream.write("]" ASCII_EOL);
-}
-
-#endif
-
 static void enet_poll (sys_state_t state)
 {
     static bool led_on = false, poll = true;
     static uint32_t last_ms0, next_ms1;
     static int last_status = -100;
-   
+
     int status;
     uint32_t ms = hal.get_elapsed_ticks();
 
@@ -572,7 +576,7 @@ static void enet_poll (sys_state_t state)
                 case CYW43_LINK_FAIL:
                     protocol_enqueue_rt_command(msg_wifi_nolink);
                     break;
-                    
+
                 case CYW43_LINK_BADAUTH:
                     protocol_enqueue_rt_command(msg_wifi_badauth);
                     break;
@@ -596,11 +600,11 @@ static void enet_poll (sys_state_t state)
 //                case CYW43_LINK_NOIP:
 //                    protocol_enqueue_rt_command(msg_wifi_noip);
 //                    break;
- 
+
                 case CYW43_LINK_NONET:
                     protocol_enqueue_rt_command(msg_wifi_nonet);
                     break;
- 
+
                 default:
 #ifdef WIFI_DEBUG
                     wifi_debug("POLL");
@@ -611,7 +615,7 @@ static void enet_poll (sys_state_t state)
     }
 
     if(scan_in_progress && (ms > next_ms1)) {
- 
+
         led_on = !led_on;
         next_ms1 = ms + 1000;
         cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, led_on);
@@ -642,7 +646,7 @@ void wifi_ap_scan (void)
         cyw43_wifi_scan_options_t scan_options = {0};
         scan_in_progress = cyw43_wifi_scan(&cyw43_state, &scan_options, NULL, scan_result) == 0;
     } else if (!cyw43_wifi_scan_active(&cyw43_state))
-        scan_in_progress = false; 
+        scan_in_progress = false;
 }
 
 /*
@@ -688,7 +692,7 @@ static void netif_sta_status_callback (struct netif *netif)
 //        case CYW43_LINK_NOIP:
 //            protocol_enqueue_rt_command(msg_wifi_noip);
 //            break;
- 
+
         case CYW43_LINK_NONET:
             protocol_enqueue_rt_command(msg_wifi_nonet);
             break;
@@ -844,7 +848,7 @@ bool wifi_start (void)
         return false;
     }
 
-#ifdef WIFI_SOFTAP 
+#ifdef WIFI_SOFTAP
 
     if(wifi.mode == WiFiMode_AP && *wifi.ap.ssid) {
 
@@ -859,16 +863,18 @@ bool wifi_start (void)
 
         ip4_addr_t gw, mask;
 
-//        get_addr(&ip, network.ip);
-//        get_addr(&mask, network.mask);
+        if (ip4addr_aton(network.ip, &gw) != 1) {
+            IP4_ADDR(&gw, 192, 168, 5, 1);
+        }
 
-        IP4_ADDR(&gw, 192, 168, 1, 4);
-        IP4_ADDR(&mask, 255, 255, 255, 0);
+        if (ip4addr_aton(network.mask, &mask) != 1) {
+            IP4_ADDR(&mask, 255, 255, 255, 0);
+        }
 
         dhcp_server_init(&dhcp_server, &gw, &mask);
  //       dns_server_init(&dns_server, &gw);
     }
-
+    else
 #endif
 
     if(wifi.mode == WiFiMode_STA && *wifi.sta.ssid) {
@@ -966,11 +972,11 @@ static status_code_t wifi_set_bssid (setting_id_t setting, char *value)
         uint32_t bssid[6];
         if(sscanf(value,"%2X:%2X:%2X:%2X:%2X:%2X", &bssid[5], &bssid[4], &bssid[3],
                                                     &bssid[2], &bssid[1], &bssid[0]) == 6) {
- 
+
             char c = LCAPS(value[strlen(value) - 1]);
             if(!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
                 return Status_InvalidStatement;
- 
+
             uint_fast8_t idx;
             for(idx = 0; idx < 6; idx++)
                 wifi.ap.bssid[idx] = bssid[idx];
@@ -1084,32 +1090,32 @@ static status_code_t wifi_set_ip (setting_id_t setting, char *value)
     switch(setting) {
 
         case Setting_IpAddress3:
-            set_addr(wifi.sta.network.ip, &addr);
+            strncpy(wifi.sta.network.ip, value, sizeof(wifi.sta.network.ip));
             break;
 
         case Setting_Gateway3:
-            set_addr(wifi.sta.network.gateway, &addr);
+            strncpy(wifi.sta.network.gateway, value, sizeof(wifi.sta.network.gateway));
             break;
 
         case Setting_NetMask3:
-            set_addr(wifi.sta.network.mask, &addr);
+            strncpy(wifi.sta.network.mask, value, sizeof(wifi.sta.network.mask));
             break;
 
 #if WIFI_SOFTAP
 
         case Setting_IpAddress2:
-            if(strcmp("192.168.4.1", value))
+            /*if(strcmp("192.168.4.1", value))
                 status = Status_SettingDisabled;
-            else
-                set_addr(wifi.ap.network.ip, &addr);
+            else*/
+                strncpy(wifi.ap.network.ip, value, sizeof(wifi.ap.network.ip));
             break;
 
         case Setting_Gateway2:
-            set_addr(wifi.ap.network.gateway, &addr);
+            strncpy(wifi.ap.network.gateway, value, sizeof(wifi.ap.network.gateway));
             break;
 
         case Setting_NetMask2:
-            set_addr(wifi.ap.network.mask, &addr);
+            strncpy(wifi.ap.network.mask, value, sizeof(wifi.ap.network.mask));
             break;
 
 #endif
@@ -1131,52 +1137,44 @@ static status_code_t wifi_set_ip (setting_id_t setting, char *value)
 
 static char *wifi_get_ip (setting_id_t setting)
 {
-    static char ip[IPADDR_STRLEN_MAX];
+    static char empty = '\0';
 
     switch(setting) {
 
         case Setting_IpAddress3:
-            ip4addr_ntoa_r((const ip_addr_t *)&wifi.sta.network.ip, ip, IPADDR_STRLEN_MAX);
-            break;
+            return wifi.sta.network.ip;
 
         case Setting_Gateway3:
-            ip4addr_ntoa_r((const ip_addr_t *)&wifi.sta.network.gateway, ip, IPADDR_STRLEN_MAX);
-            break;
+            return wifi.sta.network.gateway;
 
         case Setting_NetMask3:
-            ip4addr_ntoa_r((const ip_addr_t *)&wifi.sta.network.mask, ip, IPADDR_STRLEN_MAX);
-            break;
+            return wifi.sta.network.mask;
 
 #if WIFI_SOFTAP
 
         case Setting_IpAddress2:
-            ip4addr_ntoa_r((const ip_addr_t *)&wifi.ap.network.ip, ip, IPADDR_STRLEN_MAX);
-            break;
+            return wifi.ap.network.ip;
 
         case Setting_Gateway2:
-            ip4addr_ntoa_r((const ip_addr_t *)&wifi.ap.network.gateway, ip, IPADDR_STRLEN_MAX);
-            break;
+            return wifi.ap.network.gateway;
 
         case Setting_NetMask2:
-            ip4addr_ntoa_r((const ip_addr_t *)&wifi.ap.network.mask, ip, IPADDR_STRLEN_MAX);
-            break;
+            return wifi.ap.network.mask;
 
 #endif
 
 #if MQTT_ENABLE
 
         case Setting_MQTTBrokerIpAddress:
-            ip4addr_ntoa_r((const ip_addr_t *)&wifi.sta.network.mqtt.ip, ip, IPADDR_STRLEN_MAX);
-            break;
+            return wifi.sta.network.mqtt.ip;
 
 #endif
 
         default:
-            *ip = '\0';
             break;
     }
 
-    return ip;
+    return &empty;
 }
 
 static const setting_group_detail_t ethernet_groups [] = {
@@ -1200,9 +1198,9 @@ static const setting_detail_t ethernet_settings[] = {
     { Setting_WiFi_AP_SSID, Group_Networking_Wifi, "WiFi Access Point (AP) SSID", NULL, Format_String, "x(64)", NULL, "64", Setting_NonCore, &wifi.ap.ssid, NULL, NULL },
     { Setting_WiFi_AP_Password, Group_Networking_Wifi, "WiFi Access Point (AP) Password", NULL, Format_Password, "x(32)", NULL, "32", Setting_NonCore, &wifi.ap.password, NULL, NULL, { .allow_null = On, .reboot_required = On } },
 //    { Setting_Hostname2, Group_Networking, "Hostname (AP)", NULL, Format_String, "x(64)", NULL, "64", Setting_NonCore, &wifi.ap.network.hostname, NULL, NULL, { .reboot_required = On } },
-//    { Setting_IpAddress2, Group_Networking, "IP Address (AP)", NULL, Format_IPv4, NULL, NULL, NULL, Setting_NonCoreFn, wifi_set_ip, wifi_get_ip, NULL, { .reboot_required = On } },
-//    { Setting_Gateway2, Group_Networking, "Gateway (AP)", NULL, Format_IPv4, NULL, NULL, NULL, Setting_NonCoreFn, wifi_set_ip, wifi_get_ip, NULL, { .reboot_required = On } },
-//    { Setting_NetMask2, Group_Networking, "Netmask (AP)", NULL, Format_IPv4, NULL, NULL, NULL, Setting_NonCoreFn, wifi_set_ip, wifi_get_ip, NULL, { .reboot_required = On } },
+    { Setting_IpAddress2, Group_Networking, "IP Address (AP)", NULL, Format_IPv4, NULL, NULL, NULL, Setting_NonCoreFn, wifi_set_ip, wifi_get_ip, NULL, { .reboot_required = On } },
+    { Setting_Gateway2, Group_Networking, "Gateway (AP)", NULL, Format_IPv4, NULL, NULL, NULL, Setting_NonCoreFn, wifi_set_ip, wifi_get_ip, NULL, { .reboot_required = On } },
+    { Setting_NetMask2, Group_Networking, "Netmask (AP)", NULL, Format_IPv4, NULL, NULL, NULL, Setting_NonCoreFn, wifi_set_ip, wifi_get_ip, NULL, { .reboot_required = On } },
 #else
     { Setting_WifiMode, Group_Networking_Wifi, "WiFi Mode", NULL, Format_RadioButtons, "Off,Station", NULL, NULL, Setting_NonCore, &wifi.mode, NULL, NULL },
 #endif
@@ -1245,9 +1243,9 @@ static const setting_descr_t ethernet_settings_descr[] = {
     { Setting_WiFi_AP_SSID, "WiFi Access Point (AP) SSID." },
     { Setting_WiFi_AP_Password, "WiFi Access Point (AP) Password." },
 //    { Setting_Hostname2, "Network hostname." },
-//    { Setting_IpAddress2, "Static IP address." },
-//    { Setting_Gateway2, "Static gateway address." },
-//    { Setting_NetMask2, "Static netmask." },
+    { Setting_IpAddress2, "Static IP address." },
+    { Setting_Gateway2, "Static gateway address." },
+    { Setting_NetMask2, "Static netmask." },
 #else
     { Setting_WifiMode, "WiFi Mode." },
 #endif
@@ -1295,17 +1293,17 @@ static void wifi_settings_restore (void)
     wifi.sta.network.ip_mode = (ip_mode_t)NETWORK_STA_IPMODE;
 
     if(ip4addr_aton(NETWORK_STA_IP, &addr) == 1)
-        set_addr(wifi.sta.network.ip, &addr);
+        strncpy(wifi.sta.network.ip, NETWORK_STA_IP, sizeof(wifi.sta.network.ip));
 
     if(ip4addr_aton(NETWORK_STA_GATEWAY, &addr) == 1)
-        set_addr(wifi.sta.network.gateway, &addr);
+        strncpy(wifi.sta.network.gateway, NETWORK_STA_GATEWAY, sizeof(wifi.sta.network.gateway));
 
 #if NETWORK_STA_IPMODE == 0
     if(ip4addr_aton(NETWORK_STA_MASK, &addr) == 1)
-        set_addr(wifi.sta.network.mask, &addr);
+        strncpy(wifi.sta.network.mask, NETWORK_STA_MASK, sizeof(wifi.sta.network.mask));
  #else
-    if(ip4addr_aton("255.255.255.0", &addr) == 1)
-        set_addr(wifi.sta.network.mask, &addr);
+    strncpy(wifi.sta.network.mask, NETWORK_DEFAULT_MASK, sizeof(wifi.sta.network.mask));
+    set_addr(wifi.sta.network.mask, &addr);
 #endif
 
 // Access Point
@@ -1318,13 +1316,13 @@ static void wifi_settings_restore (void)
     strlcpy(wifi.ap.password, NETWORK_AP_PASSWORD, sizeof(wifi.ap.password));
 
     if(ip4addr_aton(NETWORK_AP_IP, &addr) == 1)
-        set_addr(wifi.ap.network.ip, &addr);
+        strncpy(wifi.ap.network.ip, NETWORK_AP_IP, sizeof(wifi.ap.network.ip));
 
     if(ip4addr_aton(NETWORK_AP_GATEWAY, &addr) == 1)
-        set_addr(wifi.ap.network.gateway, &addr);
+        strncpy(wifi.ap.network.gateway, NETWORK_AP_GATEWAY, sizeof(wifi.ap.network.gateway));
 
     if(ip4addr_aton(NETWORK_AP_MASK, &addr) == 1)
-        set_addr(wifi.ap.network.mask, &addr);
+        strncpy(wifi.ap.network.mask, NETWORK_AP_MASK, sizeof(wifi.ap.network.mask));
 
 #endif
 
@@ -1334,7 +1332,7 @@ static void wifi_settings_restore (void)
 
   #ifdef MQTT_IP_ADDRESS
     if(ip4addr_aton(MQTT_IP_ADDRESS, &addr) == 1)
-        set_addr(wifi.sta.network.mqtt.ip, &addr);
+        strncpy(wifi.sta.network.mqtt.ip, MQTT_IP_ADDRESS, sizeof(wifi.sta.network.mqtt.ip));
   #endif
 
   #ifdef MQTT_USERNAME
@@ -1365,12 +1363,6 @@ static void wifi_settings_load (void)
         wifi_settings_restore();
 
 // Sanity checks
-
-    // AP ip/gateway adresses are hardcoded!
-    if(ip4addr_aton("192.168.4.1", &addr) == 1) {
-        set_addr(wifi.ap.network.ip, &addr);
-        set_addr(wifi.ap.network.gateway, &addr);
-    }
 
 #if WIFI_SOFTAP
     if(wifi.mode == WiFiMode_APSTA)
