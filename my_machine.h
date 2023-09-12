@@ -41,18 +41,18 @@
 //#define VFD_ENABLE           1 // Set to 1 or 2 for Huanyang VFD spindle. More here https://github.com/grblHAL/Plugins_spindle
 //#define MODBUS_ENABLE        7 // Set to 1 for auto direction, 2 for direction signal on auxillary output pin.
 //#define WIFI_ENABLE          0 // Do NOT enable here, enable in CMakeLists.txt!
-//#define WIFI_SOFTAP          1 // Use Soft AP mode for WiFi. NOTE: WIP - not yet complete!
+#define WIFI_SOFTAP          1 // Use Soft AP mode for WiFi. NOTE: WIP - not yet complete!
 //#define ETHERNET_ENABLE      0 // Do NOT enable here, enable in CMakeLists.txt!
 //#define _WIZCHIP_         5500 // Selects WIZnet ethernet breakout connected via SPI.
                                  // Uncomment to enable W5500 chip, default is W5100S. Requires ethernet enabled in CMakeLists.txt.
-//#define WEBUI_ENABLE         1 // Enable ESP3D-WEBUI plugin along with networking and SD card plugins. Requires WiFi enabled.
+#define WEBUI_ENABLE         1 // Enable ESP3D-WEBUI plugin along with networking and SD card plugins. Requires WiFi enabled.
 //#define WEBUI_AUTH_ENABLE    1 // Enable ESP3D-WEBUI authentication.
-//#define WEBUI_INFLASH        1 // Store WebUI files in flash instead of on SD card.
-//#define SDCARD_ENABLE        2 // Run gcode programs from SD card. Set to 2 to enable YModem upload.
+#define WEBUI_INFLASH        1 // Store WebUI files in flash instead of on SD card.
+#define SDCARD_ENABLE        2 // Run gcode programs from SD card. Set to 2 to enable YModem upload.
 //#define MPG_ENABLE           1 // Enable MPG interface. Requires serial port and one handshake pin unless
                                  // KEYPAD_ENABLE is set to 2 when mode switching is done by the CMD_MPG_MODE_TOGGLE (0x8B)
                                  // command character. Set both MPG_ENABLE and KEYPAD_ENABLE to 2 to use a handshake pin anyway.
-//#define KEYPAD_ENABLE        1 // Set to 1 for I2C keypad, 2 for other input such as serial data. If KEYPAD_ENABLE is set to 2 
+//#define KEYPAD_ENABLE        1 // Set to 1 for I2C keypad, 2 for other input such as serial data. If KEYPAD_ENABLE is set to 2
                                  // and MPG_ENABLE is uncommented then the serial stream is shared with the MPG.
 //#define DISPLAY_ENABLE       1 // Set to 1 for I2C display protocol, 2 for I2C LED protocol.
 //#define ODOMETER_ENABLE      1 // Odometer plugin.
@@ -70,8 +70,8 @@
 // of axes can be enabled here.
 //#define X_GANGED             1
 //#define X_AUTO_SQUARE        1
-//#define Y_GANGED             1
-//#define Y_AUTO_SQUARE        1
+#define Y_GANGED             1
+#define Y_AUTO_SQUARE        1
 //#define Z_GANGED             1
 //#define Z_AUTO_SQUARE        1
 // For ganged axes the limit switch input (if available) can be configured to act as a max travel limit switch.
@@ -89,7 +89,7 @@
 //#define MDNS_ENABLE          0 // mDNS daemon. Do NOT enable here, enable in CMakeLists.txt!
 //#define SSDP_ENABLE          1 // SSDP daemon - requires HTTP enabled.
 #if SDCARD_ENABLE || WEBUI_ENABLE
-#define FTP_ENABLE           1 // Ftp daemon - requires SD card enabled.
+//#define FTP_ENABLE           1 // Ftp daemon - requires SD card enabled.
 //#define HTTP_ENABLE          1 // http daemon - requires SD card enabled.
 //#define WEBDAV_ENABLE        1 // webdav protocol - requires http daemon and SD card enabled.
 #endif
@@ -99,14 +99,14 @@
 //#define NETWORK_STA_IP          "192.168.5.1"
 //#define NETWORK_STA_GATEWAY     "192.168.5.1"
 //#define NETWORK_STA_MASK        "255.255.255.0"
-#if WIFI_SOFTAP > 0
-//#define NETWORK_AP_SSID         "grblHAL_AP"
-//#define NETWORK_AP_PASSWORD     "grblHALap"
-//#define NETWORK_AP_HOSTNAME     "grblHAL_AP"
+#if WIFI_SOFTAP
+#define NETWORK_AP_SSID         "PeHoRouterRP2040_AP"
+#define NETWORK_AP_PASSWORD     "pehorouter"
+#define NETWORK_AP_HOSTNAME     "pehorouter"
 //#define NETWORK_AP_IPMODE       0              // Do not change!
-//#define NETWORK_AP_IP           "192.168.4.1"  // Do not change!
-//#define NETWORK_AP_GATEWAY      "192.168.4.1"  // Do not change!
-//#define NETWORK_AP_MASK         "255.255.255.0"
+#define NETWORK_AP_IP           "192.168.4.1"
+#define NETWORK_AP_GATEWAY      "192.168.4.1"
+#define NETWORK_AP_MASK         "255.255.255.0"
 #endif
 //#define NETWORK_FTP_PORT     21
 //#define NETWORK_TELNET_PORT  23
