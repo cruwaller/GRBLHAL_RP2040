@@ -44,6 +44,7 @@
 #define STEPPERS_ENABLE_PIN     14
 
 // Define homing/hard limit switch input pins.
+#define LIMIT_PORT              GPIO_IN  // Not used!
 #define X_LIMIT_PIN             10
 #define Y_LIMIT_PIN             11
 #define Z_LIMIT_PIN             12
@@ -65,7 +66,7 @@
 
 // Define user-control controls (cycle start, reset, feed hold) input pins.
 //#define RESET_PIN               20
-//#define FEED_HOLD_PIN           21
+#define FEED_HOLD_PIN           21
 //#define CYCLE_START_PIN         22
 #if SAFETY_DOOR_ENABLE
 #define SAFETY_DOOR_PIN         21

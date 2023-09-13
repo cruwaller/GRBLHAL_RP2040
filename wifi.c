@@ -336,11 +336,43 @@ static void lwIPHostTimerHandler (void *arg)
     services_poll();
 }
 
+static void stop_services (void)
+{
+    network_services_t running;
+
+    running.mask = services.mask;
+    services.mask = 0;
+
+#if xHTTP_ENABLE
+    if(running.http)
+        httpdaemon_stop();
+#endif
+#if TELNET_ENABLE
+    if(running.telnet)
+        telnetd_stop();
+#endif
+#if WEBSOCKET_ENABLE
+    if(running.websocket)
+        websocketd_stop();
+#endif
+#if SSDP_ENABLE
+    if(!running.ssdp)
+        ssdp_stop();
+#endif
+//    if(running.dns)
+//        dns_server_stop();
+}
+
 static void start_services (void)
 {
+    static bool services_running = false;
+
 #ifdef WIFI_DEBUG
-    wifi_debug("AP UP...");
+    wifi_debug("START SERVICES");
 #endif
+    if (services_running) {
+        stop_services();
+    }
 
 #if TELNET_ENABLE
     if(network.services.telnet && !services.telnet)
@@ -408,33 +440,8 @@ static void start_services (void)
 #if USE_LWIP_POLLING && (TELNET_ENABLE || WEBSOCKET_ENABLE || FTP_ENABLE)
     sys_timeout(STREAM_POLL_INTERVAL, lwIPHostTimerHandler, NULL);
 #endif
-}
 
-static void stop_services (void)
-{
-    network_services_t running;
-
-    running.mask = services.mask;
-    services.mask = 0;
-
-#if xHTTP_ENABLE
-    if(running.http)
-        httpdaemon_stop();
-#endif
-#if TELNET_ENABLE
-    if(running.telnet)
-        telnetd_stop();
-#endif
-#if WEBSOCKET_ENABLE
-    if(running.websocket)
-        websocketd_stop();
-#endif
-#if SSDP_ENABLE
-    if(!running.ssdp)
-        ssdp_stop();
-#endif
-//    if(running.dns)
-//        dns_server_stop();
+    services_running = true;
 }
 
 static void msg_ap_scan_completed (sys_state_t state)
@@ -549,6 +556,8 @@ static int scan_result (void *env, const cyw43_ev_scan_result_t *result)
     return 0;
 }
 
+static bool start_ap(void);
+
 static void enet_poll (sys_state_t state)
 {
     static bool led_on = false, poll = true;
@@ -602,7 +611,13 @@ static void enet_poll (sys_state_t state)
 //                    break;
 
                 case CYW43_LINK_NONET:
+#ifdef WIFI_DEBUG
+                    wifi_debug("POLL - NONET");
+#endif
                     protocol_enqueue_rt_command(msg_wifi_nonet);
+                    if (wifi.mode == WiFiMode_APSTA) {
+                        start_ap();
+                    }
                     break;
 
                 default:
@@ -694,7 +709,13 @@ static void netif_sta_status_callback (struct netif *netif)
 //            break;
 
         case CYW43_LINK_NONET:
+#ifdef WIFI_DEBUG
+            wifi_debug("NETIF_NONET");
+#endif
             protocol_enqueue_rt_command(msg_wifi_nonet);
+            if (wifi.mode == WiFiMode_APSTA) {
+                start_ap();
+            }
             break;
 
         default:
@@ -739,7 +760,13 @@ static void link_sta_status_callback (struct netif *netif)
  //           break;
 
         case CYW43_LINK_NONET:
+#ifdef WIFI_DEBUG
+            wifi_debug("LINK_NONET");
+#endif
             protocol_enqueue_rt_command(msg_wifi_nonet);
+            if (wifi.mode == WiFiMode_APSTA) {
+                start_ap();
+            }
             break;
 
         default:
@@ -801,16 +828,6 @@ static void netif_ap_status_callback (struct netif *netif)
 
 #endif
 
-static inline void set_addr (char *ip, ip4_addr_t *addr)
-{
-    memcpy(ip, addr, sizeof(ip4_addr_t));
-}
-
-static inline void get_addr (ip4_addr_t *addr, char *ip)
-{
-    memcpy(addr, ip, sizeof(ip4_addr_t));
-}
-
 static void init_settings (int itf, network_settings_t *settings)
 {
     interface = itf;
@@ -830,10 +847,80 @@ static void init_settings (int itf, network_settings_t *settings)
 #endif
 }
 
+static bool connect_sta(void)
+{
+#ifdef WIFI_DEBUG
+    wifi_debug("STA CONNECT");
+#endif
+
+    if (!*wifi.sta.ssid)
+        return false;
+
+    init_settings(CYW43_ITF_STA, &wifi.sta.network);
+
+    cyw43_arch_enable_sta_mode();
+
+    netif_set_status_callback(netif_default, netif_sta_status_callback);
+    netif_set_link_callback(netif_default, link_sta_status_callback);
+
+    if(cyw43_arch_wifi_connect_bssid_async(
+            wifi.sta.ssid,
+            networking_ismemnull(wifi.ap.bssid, sizeof(bssid_t)) ? NULL : wifi.ap.bssid,
+            *wifi.sta.password ? wifi.sta.password : NULL,
+            *wifi.sta.password ? CYW43_AUTH_WPA2_MIXED_PSK : CYW43_AUTH_OPEN) != 0) {
+        protocol_enqueue_rt_command(msg_wifi_failed);
+        return false;
+    }
+    return true;
+}
+
+static bool start_ap(void)
+{
+#ifdef WIFI_SOFTAP
+    static bool ap_started = false;
+
+    if (!*wifi.ap.ssid)
+        return false;
+    if (ap_started)
+        return true;
+
+#ifdef WIFI_DEBUG
+    wifi_debug("START AP");
+#endif
+
+    init_settings(CYW43_ITF_AP, &wifi.ap.network);
+
+    cyw43_arch_enable_ap_mode(wifi.ap.ssid,
+                                *wifi.ap.password ? wifi.ap.password : NULL,
+                                *wifi.ap.password ? CYW43_AUTH_WPA2_AES_PSK : CYW43_AUTH_OPEN);
+
+    netif_set_status_callback(netif_default, netif_ap_status_callback);
+    netif_set_link_callback(netif_default, link_ap_status_callback);
+
+    ip4_addr_t gw, mask;
+
+    if (ip4addr_aton(network.ip, &gw) != 1) {
+        IP4_ADDR(&gw, 192, 168, 5, 1);
+    }
+
+    if (ip4addr_aton(network.mask, &mask) != 1) {
+        IP4_ADDR(&mask, 255, 255, 255, 0);
+    }
+
+    dhcp_server_init(&dhcp_server, &gw, &mask);
+    //dns_server_init(&dns_server, &gw);
+    ap_started = true;
+    return true;
+#else
+    return false;
+#endif
+}
+
 bool wifi_start (void)
 {
     int ret;
     uint32_t country_code;
+    bool ap_up = false;
 
     if(nvs_address == 0)
         return false;
@@ -848,50 +935,17 @@ bool wifi_start (void)
         return false;
     }
 
+    if(wifi.mode == WiFiMode_STA || wifi.mode == WiFiMode_APSTA) {
+        ap_up = !connect_sta() && wifi.mode == WiFiMode_APSTA;
+    }
+
 #ifdef WIFI_SOFTAP
 
-    if(wifi.mode == WiFiMode_AP && *wifi.ap.ssid) {
-
-        init_settings(CYW43_ITF_AP, &wifi.ap.network);
-
-        cyw43_arch_enable_ap_mode(wifi.ap.ssid,
-                                   *wifi.ap.password ? wifi.ap.password : NULL,
-                                    *wifi.ap.password ? CYW43_AUTH_WPA2_AES_PSK : CYW43_AUTH_OPEN);
-
-        netif_set_status_callback(netif_default, netif_ap_status_callback);
-        netif_set_link_callback(netif_default, link_ap_status_callback);
-
-        ip4_addr_t gw, mask;
-
-        if (ip4addr_aton(network.ip, &gw) != 1) {
-            IP4_ADDR(&gw, 192, 168, 5, 1);
-        }
-
-        if (ip4addr_aton(network.mask, &mask) != 1) {
-            IP4_ADDR(&mask, 255, 255, 255, 0);
-        }
-
-        dhcp_server_init(&dhcp_server, &gw, &mask);
- //       dns_server_init(&dns_server, &gw);
+    if(wifi.mode == WiFiMode_AP || ap_up) {
+        start_ap();
     }
-    else
+
 #endif
-
-    if(wifi.mode == WiFiMode_STA && *wifi.sta.ssid) {
-
-        init_settings(CYW43_ITF_STA, &wifi.sta.network);
-
-        cyw43_arch_enable_sta_mode();
-
-        netif_set_status_callback(netif_default, netif_sta_status_callback);
-        netif_set_link_callback(netif_default, link_sta_status_callback);
-
-        if((ret = cyw43_arch_wifi_connect_bssid_async(wifi.sta.ssid,
-                                                    networking_ismemnull(wifi.ap.bssid, sizeof(bssid_t)) ? NULL : wifi.ap.bssid,
-                                                     *wifi.sta.password ? wifi.sta.password : NULL,
-                                                      *wifi.sta.password ? CYW43_AUTH_WPA2_MIXED_PSK : CYW43_AUTH_OPEN)) != 0)
-            protocol_enqueue_rt_command(msg_wifi_failed);
-    }
 
 #if LWIP_NETIF_HOSTNAME
     netif_set_hostname(netif_default, network.hostname);
@@ -1123,7 +1177,7 @@ static status_code_t wifi_set_ip (setting_id_t setting, char *value)
 #if MQTT_ENABLE
 
         case Setting_MQTTBrokerIpAddress:
-            set_addr(wifi.sta.network.mqtt.ip, &addr);
+            strncpy(wifi.sta.network.mqtt.ip, value, sizeof(wifi.sta.network.mqtt.ip));
             break;
 #endif
 
@@ -1194,7 +1248,7 @@ static const setting_detail_t ethernet_settings[] = {
     { Setting_Gateway3, Group_Networking, "Gateway", NULL, Format_IPv4, NULL, NULL, NULL, Setting_NonCoreFn, wifi_set_ip, wifi_get_ip, NULL, { .reboot_required = On } },
     { Setting_NetMask3, Group_Networking, "Netmask", NULL, Format_IPv4, NULL, NULL, NULL, Setting_NonCoreFn, wifi_set_ip, wifi_get_ip, NULL, { .reboot_required = On } },
 #if WIFI_SOFTAP
-    { Setting_WifiMode, Group_Networking_Wifi, "WiFi Mode", NULL, Format_RadioButtons, "Off,Station,Access Point", NULL, NULL, Setting_NonCore, &wifi.mode, NULL, NULL },
+    { Setting_WifiMode, Group_Networking_Wifi, "WiFi Mode", NULL, Format_RadioButtons, "Off,Station,Access Point,Hybrid", NULL, NULL, Setting_NonCore, &wifi.mode, NULL, NULL },
     { Setting_WiFi_AP_SSID, Group_Networking_Wifi, "WiFi Access Point (AP) SSID", NULL, Format_String, "x(64)", NULL, "64", Setting_NonCore, &wifi.ap.ssid, NULL, NULL },
     { Setting_WiFi_AP_Password, Group_Networking_Wifi, "WiFi Access Point (AP) Password", NULL, Format_Password, "x(32)", NULL, "32", Setting_NonCore, &wifi.ap.password, NULL, NULL, { .allow_null = On, .reboot_required = On } },
 //    { Setting_Hostname2, Group_Networking, "Hostname (AP)", NULL, Format_String, "x(64)", NULL, "64", Setting_NonCore, &wifi.ap.network.hostname, NULL, NULL, { .reboot_required = On } },
@@ -1302,8 +1356,7 @@ static void wifi_settings_restore (void)
     if(ip4addr_aton(NETWORK_STA_MASK, &addr) == 1)
         strncpy(wifi.sta.network.mask, NETWORK_STA_MASK, sizeof(wifi.sta.network.mask));
  #else
-    strncpy(wifi.sta.network.mask, NETWORK_DEFAULT_MASK, sizeof(wifi.sta.network.mask));
-    set_addr(wifi.sta.network.mask, &addr);
+    strncpy(wifi.sta.network.mask, "255.255.255.0", sizeof(wifi.sta.network.mask));
 #endif
 
 // Access Point
@@ -1365,8 +1418,8 @@ static void wifi_settings_load (void)
 // Sanity checks
 
 #if WIFI_SOFTAP
-    if(wifi.mode == WiFiMode_APSTA)
-        wifi.mode = WiFiMode_STA;
+    //if(wifi.mode == WiFiMode_APSTA)
+    //    wifi.mode = WiFiMode_STA;
 #else
     if(wifi.mode == WiFiMode_AP || wifi.mode == WiFiMode_APSTA)
         wifi.mode = WiFiMode_STA;
