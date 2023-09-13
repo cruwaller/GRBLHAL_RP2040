@@ -42,7 +42,7 @@
 #include "grbl/nvs_buffer.h"
 #include "grbl/protocol.h"
 
-//#define WIFI_DEBUG
+#define WIFI_DEBUG
 #define USE_LWIP_POLLING 1
 
 typedef struct
@@ -365,14 +365,9 @@ static void stop_services (void)
 
 static void start_services (void)
 {
-    static bool services_running = false;
-
 #ifdef WIFI_DEBUG
     wifi_debug("START SERVICES");
 #endif
-    if (services_running) {
-        stop_services();
-    }
 
 #if TELNET_ENABLE
     if(network.services.telnet && !services.telnet)
@@ -440,8 +435,6 @@ static void start_services (void)
 #if USE_LWIP_POLLING && (TELNET_ENABLE || WEBSOCKET_ENABLE || FTP_ENABLE)
     sys_timeout(STREAM_POLL_INTERVAL, lwIPHostTimerHandler, NULL);
 #endif
-
-    services_running = true;
 }
 
 static void msg_ap_scan_completed (sys_state_t state)
@@ -488,6 +481,11 @@ static void msg_wifi_nonet (sys_state_t state)
     hal.stream.write_all("[MSG:WIFI NONET]" ASCII_EOL);
 }
 
+static void msg_wifi_nonet_to_ap (sys_state_t state)
+{
+    hal.stream.write_all("[MSG:WIFI NONET START AP]" ASCII_EOL);
+}
+
 static void msg_wifi_badauth (sys_state_t state)
 {
     hal.stream.write_all("[MSG:BAD AUTH]" ASCII_EOL);
@@ -507,7 +505,12 @@ static void msg_wifi_start (sys_state_t state)
 
 static void msg_ap_ready (sys_state_t state)
 {
-    hal.stream.write_all("[MSG:WIFI AP READY]" ASCII_EOL);
+    char buf[50];
+
+    sprintf(buf, "[MSG:WIFI AP READY, IP=%s]" ASCII_EOL, wifi_get_ipaddr());
+
+    hal.stream.write_all(buf);
+    //hal.stream.write_all("[MSG:WIFI AP READY]" ASCII_EOL);
 }
 
 static void msg_ap_connected (sys_state_t state)
@@ -576,6 +579,7 @@ static void enet_poll (sys_state_t state)
 #endif
 
         if((status = cyw43_tcpip_link_status(&cyw43_state, interface)) != last_status) {
+            bool swap_to_ap = (wifi.mode == WiFiMode_APSTA && interface == CYW43_ITF_STA);
 
             linkUp = status == CYW43_LINK_UP;
             last_status = status;
@@ -584,6 +588,10 @@ static void enet_poll (sys_state_t state)
 
                 case CYW43_LINK_FAIL:
                     protocol_enqueue_rt_command(msg_wifi_nolink);
+                    break;
+
+                case CYW43_LINK_DOWN:
+                    protocol_enqueue_rt_command(msg_sta_disconnected);
                     break;
 
                 case CYW43_LINK_BADAUTH:
@@ -596,7 +604,8 @@ static void enet_poll (sys_state_t state)
 
 #ifdef WIFI_SOFTAP
                 case CYW43_LINK_UP:
-                    if(wifi.mode == WiFiMode_AP) {
+                    swap_to_ap = false;
+                    if(interface == CYW43_ITF_AP) {
                         struct netif *netif = netif_default; //netif_get_by_index(0);
                         if(netif) {
                             ip4addr_ntoa_r(netif_ip_addr4(netif), IPAddress, IP4ADDR_STRLEN_MAX);
@@ -611,20 +620,22 @@ static void enet_poll (sys_state_t state)
 //                    break;
 
                 case CYW43_LINK_NONET:
-#ifdef WIFI_DEBUG
-                    wifi_debug("POLL - NONET");
-#endif
                     protocol_enqueue_rt_command(msg_wifi_nonet);
-                    if (wifi.mode == WiFiMode_APSTA) {
-                        start_ap();
-                    }
                     break;
 
                 default:
 #ifdef WIFI_DEBUG
-                    wifi_debug("POLL");
+                    wifi_debug("POLL_DEFAULT");
 #endif
+                    swap_to_ap = false;
                     break;
+            }
+
+            if (swap_to_ap) {
+#ifdef WIFI_DEBUG
+                wifi_debug("POLL_START_AP");
+#endif
+                start_ap();
             }
         }
     }
@@ -709,13 +720,7 @@ static void netif_sta_status_callback (struct netif *netif)
 //            break;
 
         case CYW43_LINK_NONET:
-#ifdef WIFI_DEBUG
-            wifi_debug("NETIF_NONET");
-#endif
             protocol_enqueue_rt_command(msg_wifi_nonet);
-            if (wifi.mode == WiFiMode_APSTA) {
-                start_ap();
-            }
             break;
 
         default:
@@ -760,13 +765,7 @@ static void link_sta_status_callback (struct netif *netif)
  //           break;
 
         case CYW43_LINK_NONET:
-#ifdef WIFI_DEBUG
-            wifi_debug("LINK_NONET");
-#endif
             protocol_enqueue_rt_command(msg_wifi_nonet);
-            if (wifi.mode == WiFiMode_APSTA) {
-                start_ap();
-            }
             break;
 
         default:
@@ -775,30 +774,6 @@ static void link_sta_status_callback (struct netif *netif)
 }
 
 #ifdef WIFI_SOFTAP
-
-static void link_ap_status_callback (struct netif *netif)
-{
-#ifdef WIFI_DEBUG
-    wifi_debug("AP_LINK");
-#endif
-
-    switch(cyw43_tcpip_link_status(&cyw43_state, interface)) {
-
-        case CYW43_LINK_UP:
-            if((linkUp = netif->ip_addr.addr != 0)) {
-                ip4addr_ntoa_r(netif_ip_addr4(netif), IPAddress, IP4ADDR_STRLEN_MAX);
-                start_services();
- //               wifi_ap_scan();
-            }
-            protocol_enqueue_rt_command(msg_ap_ready);
-            break;
-
-        case CYW43_LINK_DOWN:
-            *IPAddress = '\0';
-            protocol_enqueue_rt_command(msg_sta_disconnected);
-            break;
-    }
-}
 
 static void netif_ap_status_callback (struct netif *netif)
 {
@@ -811,7 +786,7 @@ static void netif_ap_status_callback (struct netif *netif)
         case CYW43_LINK_UP:
             if(netif->ip_addr.addr != 0) {
                 ip4addr_ntoa_r(netif_ip_addr4(netif), IPAddress, IP4ADDR_STRLEN_MAX);
-                start_services();
+                //start_services();
             }
             protocol_enqueue_rt_command(msg_ap_ready);
             break;
@@ -822,6 +797,29 @@ static void netif_ap_status_callback (struct netif *netif)
             break;
 
         default:
+            break;
+    }
+}
+
+static void link_ap_status_callback (struct netif *netif)
+{
+#ifdef WIFI_DEBUG
+    wifi_debug("AP_LINK");
+#endif
+
+    switch(cyw43_tcpip_link_status(&cyw43_state, interface)) {
+
+        case CYW43_LINK_UP:
+            if((linkUp = netif->ip_addr.addr != 0)) {
+                ip4addr_ntoa_r(netif_ip_addr4(netif), IPAddress, IP4ADDR_STRLEN_MAX);
+                //start_services();
+            }
+            protocol_enqueue_rt_command(msg_ap_ready);
+            break;
+
+        case CYW43_LINK_DOWN:
+            *IPAddress = '\0';
+            protocol_enqueue_rt_command(msg_sta_disconnected);
             break;
     }
 }
@@ -849,12 +847,12 @@ static void init_settings (int itf, network_settings_t *settings)
 
 static bool connect_sta(void)
 {
-#ifdef WIFI_DEBUG
-    wifi_debug("STA CONNECT");
-#endif
-
     if (!*wifi.sta.ssid)
         return false;
+
+#ifdef WIFI_DEBUG
+    wifi_debug("STA_CONNECT");
+#endif
 
     init_settings(CYW43_ITF_STA, &wifi.sta.network);
 
@@ -885,7 +883,7 @@ static bool start_ap(void)
         return true;
 
 #ifdef WIFI_DEBUG
-    wifi_debug("START AP");
+    wifi_debug("START_AP");
 #endif
 
     init_settings(CYW43_ITF_AP, &wifi.ap.network);
