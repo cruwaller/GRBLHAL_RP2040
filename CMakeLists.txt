@@ -2,11 +2,11 @@ cmake_minimum_required(VERSION 3.13)
 
 option(ADD_HPGL "Add HPGL plugin" OFF)
  # Note: WiFi and Ethernet cannot be enabled at the same time!
-option(ADD_WIFI "Add WiFi networking" OFF)
+option(ADD_WIFI "Add WiFi networking" ON)
 option(ADD_ETHERNET "Add Ethernet networking" OFF)
 option(ADD_BLUETOOTH "Add Bluetooth" OFF)
 # Set LWIP_DIR below to the root path of lwIP sources when the following is set ON!
-option(ADD_mDNS "Add mDNS service" OFF) 
+option(ADD_mDNS "Add mDNS service" ON)
 option(ADD_MQTT "Add MQTT client API" OFF)
 #
 option(AddMyPlugin "Add my_plugin.c to build" OFF)
@@ -152,7 +152,7 @@ if(ADD_BLUETOOTH)
     )
     target_include_directories(grblHAL PRIVATE ${PICO_SDK_PATH}/lib/btstack/src)
     target_link_libraries(grblHAL PRIVATE
-     pico_btstack_classic 
+     pico_btstack_classic
      pico_btstack_ble
      pico_btstack_cyw43
     )
